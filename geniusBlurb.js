@@ -121,6 +121,12 @@ function normalizeWords(text) {
     .filter(Boolean);
 }
 
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
 // Genius fragments don't line up 1:1 with Spotify's lyric lines (they can span
 // partial lines or multiple lines), so match by word overlap rather than exact text.
 function findLineAnnotation(lineText, referents) {
@@ -195,6 +201,13 @@ async function fetchGeniusData() {
     description: (!desc || desc === "?") ? null : desc,
     url: song.url,
     thumbnail: song.song_art_image_thumbnail_url,
+    album: song.album?.name || null,
+    releaseDate: song.release_date || null,
+    producers: (song.producer_artists || []).map((a) => a.name).filter(Boolean),
+    writers: (song.writer_artists || []).map((a) => a.name).filter(Boolean),
+    media: (song.media || [])
+      .filter((m) => m.url)
+      .map((m) => ({ provider: m.provider, url: m.url })),
     lyrics,
     referents,
   };
@@ -314,6 +327,33 @@ function addStyles() {
       color: #888;
       margin-bottom: 6px;
     }
+    #genius-panel-facts-label {
+      display: none;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #888;
+      margin: 14px 0 6px;
+    }
+    #genius-panel-facts {
+      display: none;
+    }
+    .genius-fact-row {
+      display: flex;
+      gap: 8px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #e0e0e0;
+    }
+    .genius-fact-key {
+      flex: 0 0 88px;
+      color: #888;
+    }
+    .genius-fact-val a {
+      color: #ffff64;
+      text-decoration: none;
+    }
+    .genius-fact-val a:hover { text-decoration: underline; }
     #genius-toggle-btn {
       position: fixed;
       bottom: 90px;
@@ -359,6 +399,8 @@ function buildUI() {
     </div>
     <div id="genius-panel-body-label">ABOUT THIS SONG</div>
     <div id="genius-panel-body"></div>
+    <div id="genius-panel-facts-label">SONG FACTS</div>
+    <div id="genius-panel-facts"></div>
     <a id="genius-panel-link" target="_blank" href="#">View on Genius ↗</a>
   `;
   document.body.appendChild(panel);
@@ -420,6 +462,8 @@ async function renderPanel() {
   document.getElementById("genius-panel-body").innerHTML = "Searching Genius...";
   document.getElementById("genius-panel-link").style.display = "none";
   document.getElementById("genius-panel-thumb").style.display = "none";
+  document.getElementById("genius-panel-facts-label").style.display = "none";
+  document.getElementById("genius-panel-facts").style.display = "none";
 
   try {
     const data = await fetchGeniusData();
@@ -475,10 +519,53 @@ function showData(data) {
     body.innerHTML = `<em style="color:#888">No description available for this song on Genius.</em>`;
   }
 
+  // Facts
+  renderFacts(data);
+
   // Link
   const link = document.getElementById("genius-panel-link");
   link.href = data.url;
   link.style.display = "inline-block";
+}
+
+const MEDIA_LABELS = { youtube: "YouTube", soundcloud: "SoundCloud", spotify: "Spotify", vevo: "Vevo", audiomack: "Audiomack" };
+
+function mediaLabel(provider) {
+  return MEDIA_LABELS[provider] || (provider ? provider[0].toUpperCase() + provider.slice(1) : "Link");
+}
+
+function factRow(key, valueHtml) {
+  return `<div class="genius-fact-row"><span class="genius-fact-key">${key}</span><span class="genius-fact-val">${valueHtml}</span></div>`;
+}
+
+function renderFacts(data) {
+  const label = document.getElementById("genius-panel-facts-label");
+  const container = document.getElementById("genius-panel-facts");
+  const rows = [];
+
+  if (data.album) rows.push(factRow("Album", escapeHtml(data.album)));
+  if (data.releaseDate) rows.push(factRow("Released", escapeHtml(data.releaseDate)));
+  if (data.producers?.length) {
+    rows.push(factRow(data.producers.length > 1 ? "Producers" : "Producer", escapeHtml(data.producers.join(", "))));
+  }
+  if (data.writers?.length) {
+    rows.push(factRow(data.writers.length > 1 ? "Writers" : "Writer", escapeHtml(data.writers.join(", "))));
+  }
+  if (data.media?.length) {
+    const links = data.media
+      .map((m) => `<a href="${escapeHtml(m.url)}" target="_blank">${escapeHtml(mediaLabel(m.provider))}</a>`)
+      .join(" · ");
+    rows.push(factRow("Listen/Watch", links));
+  }
+
+  if (!rows.length) {
+    label.style.display = "none";
+    container.style.display = "none";
+    return;
+  }
+  container.innerHTML = rows.join("");
+  label.style.display = "block";
+  container.style.display = "block";
 }
 
 // ── Live line-sync ticker ────────────────────────────────────────────────────
