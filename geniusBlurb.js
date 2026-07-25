@@ -4,6 +4,17 @@
 const TOKEN_KEY = "geniusBlurb:token";
 const CACHE_KEY = "geniusBlurb:cache";
 
+const RELATIONSHIP_LABELS = {
+  samples: "Samples",
+  sampled_in: "Sampled In",
+  interpolates: "Interpolates",
+  interpolated_by: "Interpolated By",
+  cover_of: "Cover Of",
+  covered_by: "Covered By",
+  remix_of: "Remix Of",
+  remixed_by: "Remixed By",
+};
+
 // Live line-sync state (not cached — tied to current playback)
 let currentSongData = null;
 let lastLineIndex = -1;
@@ -208,6 +219,16 @@ async function fetchGeniusData() {
     media: (song.media || [])
       .filter((m) => m.url)
       .map((m) => ({ provider: m.provider, url: m.url })),
+    relationships: (song.song_relationships || [])
+      .filter((r) => r.songs?.length && RELATIONSHIP_LABELS[r.relationship_type])
+      .map((r) => ({
+        type: r.relationship_type,
+        songs: r.songs.map((s) => ({
+          title: s.title,
+          artist: s.primary_artist?.name || "",
+          url: s.url,
+        })),
+      })),
     lyrics,
     referents,
   };
@@ -340,6 +361,7 @@ function addStyles() {
     }
     .genius-fact-row {
       display: flex;
+      align-items: flex-start;
       gap: 8px;
       font-size: 12px;
       line-height: 1.6;
@@ -354,6 +376,32 @@ function addStyles() {
       text-decoration: none;
     }
     .genius-fact-val a:hover { text-decoration: underline; }
+    .genius-fact-details {
+      margin-top: 4px;
+    }
+    .genius-fact-details summary {
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      color: #ffff64;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .genius-fact-details summary::-webkit-details-marker { display: none; }
+    .genius-fact-details summary::before {
+      content: "▸";
+      font-size: 10px;
+      transition: transform 0.15s;
+    }
+    .genius-fact-details[open] summary::before { transform: rotate(90deg); }
+    .genius-fact-details-body {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
     #genius-toggle-btn {
       position: fixed;
       bottom: 90px;
@@ -556,6 +604,24 @@ function renderFacts(data) {
       .map((m) => `<a href="${escapeHtml(m.url)}" target="_blank">${escapeHtml(mediaLabel(m.provider))}</a>`)
       .join(" · ");
     rows.push(factRow("Listen/Watch", links));
+  }
+  const relRows = (data.relationships || []).map((rel) => {
+    const relLabel = RELATIONSHIP_LABELS[rel.type] || rel.type;
+    const links = rel.songs
+      .map((s) => {
+        const name = s.artist ? `${s.title} — ${s.artist}` : s.title;
+        return `<a href="${escapeHtml(s.url)}" target="_blank">${escapeHtml(name)}</a>`;
+      })
+      .join("<br>");
+    return factRow(relLabel, links);
+  });
+  if (relRows.length) {
+    rows.push(`
+      <details class="genius-fact-details">
+        <summary>Samples &amp; Interpolations (${relRows.length})</summary>
+        <div class="genius-fact-details-body">${relRows.join("")}</div>
+      </details>
+    `);
   }
 
   if (!rows.length) {
