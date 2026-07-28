@@ -1,0 +1,13 @@
+[
+  {
+    "name": "Genius Blurb",
+    "description": "Brings Genius annotations into Spotify — song descriptions, lyric annotations, and song facts.",
+    "preview": "screenshot.png",
+    "main": "geniusBlurb.js",
+    "readme": "README.md",
+    "authors": [
+      { "name": "quatic", "url": "https://github.com/arnavpodichetty" }
+    ],
+    "tags": ["genius", "lyrics", "annotations", "songs"]
+  }
+]
