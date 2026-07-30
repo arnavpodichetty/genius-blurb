@@ -1,6 +1,8 @@
 # Genius Blurb
 A Spicetify extension that brings Genius annotations into Spotify — song backstories, "about this song" descriptions, and line-by-line lyric annotations that sync with playback.
 
+![Genius Blurb screenshot](screenshot.png)
+
 ## Features
 - **Song descriptions** — Pulls the "About" section from Genius for the currently playing track
 - **Live lyric annotations** — As synced lyrics play, matches the current line to its Genius annotation and displays it in real time
