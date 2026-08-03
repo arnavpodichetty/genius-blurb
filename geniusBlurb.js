@@ -34,7 +34,14 @@ function getToken() {
   return Spicetify.LocalStorage.get(TOKEN_KEY) || "";
 }
 
+function clearToken() {
+  Spicetify.LocalStorage.remove?.(TOKEN_KEY);
+  // Older Spicetify builds have no remove() — blank it out so getToken() is falsy.
+  if (getToken()) Spicetify.LocalStorage.set(TOKEN_KEY, "");
+}
+
 function promptForToken(onSaved) {
+  const hasToken = !!getToken();
   const wrapper = document.createElement("div");
   wrapper.style.cssText = "display:flex;flex-direction:column;gap:10px;min-width:320px;";
   wrapper.innerHTML = `
@@ -42,20 +49,40 @@ function promptForToken(onSaved) {
       Enter your Genius API access token (create a free client at
       <a href="https://genius.com/api-clients" target="_blank" style="color:#ffff64;">genius.com/api-clients</a>).
     </p>
-    <input id="genius-token-input" type="password" placeholder="Genius access token"
+    <input id="genius-token-input" type="password" placeholder="${hasToken ? "Enter a new token" : "Genius access token"}"
       style="padding:8px;border-radius:4px;border:1px solid #444;background:#111;color:#fff;font-size:13px;" />
     <button id="genius-token-save"
       style="padding:8px;border-radius:4px;border:none;background:#ffff64;color:#000;font-weight:700;cursor:pointer;">
-      Save
+      ${hasToken ? "Replace token" : "Save"}
     </button>
+    ${hasToken ? `
+      <button id="genius-token-clear"
+        style="padding:8px;border-radius:4px;border:1px solid #555;background:transparent;color:#f88;font-size:12px;font-weight:600;cursor:pointer;">
+        Remove saved token
+      </button>
+      <p id="genius-token-hint" style="margin:0;font-size:11px;color:#777;">
+        A token is currently saved. Entering a new one overwrites it.
+      </p>` : ""}
   `;
   Spicetify.PopupModal.display({ title: "✦ Genius — API Token", content: wrapper });
 
-  wrapper.querySelector("#genius-token-save").addEventListener("click", () => {
-    const val = wrapper.querySelector("#genius-token-input").value.trim();
+  const input = wrapper.querySelector("#genius-token-input");
+  const save = () => {
+    const val = input.value.trim();
     if (!val) return;
     Spicetify.LocalStorage.set(TOKEN_KEY, val);
     Spicetify.PopupModal.hide();
+    onSaved?.();
+  };
+
+  wrapper.querySelector("#genius-token-save").addEventListener("click", save);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  input.focus();
+
+  wrapper.querySelector("#genius-token-clear")?.addEventListener("click", () => {
+    clearToken();
+    Spicetify.PopupModal.hide();
+    Spicetify.showNotification?.("Genius token removed");
     onSaved?.();
   });
 }
@@ -66,6 +93,8 @@ async function geniusFetch(url) {
   if (!token) throw new Error("NO_TOKEN");
   const sep = url.includes("?") ? "&" : "?";
   const res = await fetch(`${url}${sep}access_token=${token}`);
+  // 401/403 = the saved token is wrong, expired, or revoked.
+  if (res.status === 401 || res.status === 403) throw new Error("BAD_TOKEN");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -275,7 +304,8 @@ function addStyles() {
       letter-spacing: 1px;
       text-transform: uppercase;
     }
-    #genius-panel-close {
+    #genius-panel-close,
+    #genius-panel-settings {
       background: none;
       border: none;
       color: #aaa;
@@ -284,7 +314,9 @@ function addStyles() {
       padding: 0 4px;
       line-height: 1;
     }
-    #genius-panel-close:hover { color: #fff; }
+    #genius-panel-settings { font-size: 15px; }
+    #genius-panel-close:hover,
+    #genius-panel-settings:hover { color: #fff; }
     #genius-panel-thumb {
       width: 48px;
       height: 48px;
@@ -436,7 +468,10 @@ function buildUI() {
   panel.innerHTML = `
     <div id="genius-panel-header">
       <span id="genius-panel-logo">✦ Genius</span>
-      <button id="genius-panel-close">✕</button>
+      <span>
+        <button id="genius-panel-settings" title="Change or reset API token">⚙</button>
+        <button id="genius-panel-close">✕</button>
+      </span>
     </div>
     <img id="genius-panel-thumb" style="display:none" alt="" />
     <div id="genius-panel-song">Loading...</div>
@@ -463,6 +498,10 @@ function buildUI() {
     startLineTicker();
   });
 
+  document.getElementById("genius-panel-settings").addEventListener("click", () => {
+    promptForToken(() => renderPanel());
+  });
+
   document.getElementById("genius-panel-close").addEventListener("click", () => {
     panelOpen = false;
     panel.style.display = "none";
@@ -479,11 +518,32 @@ function buildUI() {
 }
 
 // ── Render panel content ──────────────────────────────────────────────────────
-async function renderPanel() {
+// Every section that renders fetched data — hidden together so a song change,
+// a missing token or an error can never leave the previous song's info on screen.
+const DATA_SECTION_IDS = [
+  "genius-panel-line",
+  "genius-panel-body-label",
+  "genius-panel-facts-label",
+  "genius-panel-facts",
+  "genius-panel-link",
+  "genius-panel-thumb",
+];
+
+function clearPanelData() {
   currentSongData = null;
   lastLineIndex = -1;
-  const lineSectionEl = document.getElementById("genius-panel-line");
-  if (lineSectionEl) lineSectionEl.style.display = "none";
+  for (const id of DATA_SECTION_IDS) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  }
+  const facts = document.getElementById("genius-panel-facts");
+  if (facts) facts.innerHTML = "";
+  const thumb = document.getElementById("genius-panel-thumb");
+  if (thumb) thumb.removeAttribute("src");
+}
+
+async function renderPanel() {
+  clearPanelData();
 
   const meta = Spicetify.Player.data?.item;
   if (!meta) {
@@ -495,6 +555,12 @@ async function renderPanel() {
   const artist = meta.artists?.[0]?.name || "";
   document.getElementById("genius-panel-song").textContent = `${title} — ${artist}`;
 
+  // No token means nothing on screen is trustworthy — not even cached facts.
+  if (!getToken()) {
+    showTokenPrompt();
+    return;
+  }
+
   // Show cached data instantly if available
   const cached = getCached(meta.uri);
   if (cached) {
@@ -502,16 +568,7 @@ async function renderPanel() {
     return;
   }
 
-  if (!getToken()) {
-    showTokenPrompt();
-    return;
-  }
-
   document.getElementById("genius-panel-body").innerHTML = "Searching Genius...";
-  document.getElementById("genius-panel-link").style.display = "none";
-  document.getElementById("genius-panel-thumb").style.display = "none";
-  document.getElementById("genius-panel-facts-label").style.display = "none";
-  document.getElementById("genius-panel-facts").style.display = "none";
 
   try {
     const data = await fetchGeniusData();
@@ -525,17 +582,24 @@ async function renderPanel() {
       showTokenPrompt();
       return;
     }
+    if (err?.message === "BAD_TOKEN") {
+      showTokenPrompt("Genius rejected the saved token. Enter a new one.");
+      return;
+    }
     document.getElementById("genius-panel-body").innerHTML = `<em style="color:#f88">Error: ${err?.message || err}</em>`;
     console.error("[geniusBlurb]", err);
   }
 }
 
-function showTokenPrompt() {
+function showTokenPrompt(errorMsg) {
+  clearPanelData();
   const body = document.getElementById("genius-panel-body");
-  body.innerHTML = `<button id="genius-token-setup-btn"
-    style="width:100%;padding:8px;border-radius:6px;border:none;background:#ffff64;color:#000;font-weight:700;cursor:pointer;">
-    Set up Genius API token
-  </button>`;
+  body.innerHTML = `
+    ${errorMsg ? `<p style="margin:0 0 10px;color:#f88;font-size:13px;">${errorMsg}</p>` : ""}
+    <button id="genius-token-setup-btn"
+      style="width:100%;padding:8px;border-radius:6px;border:none;background:#ffff64;color:#000;font-weight:700;cursor:pointer;">
+      ${errorMsg ? "Reset Genius API token" : "Set up Genius API token"}
+    </button>`;
   document.getElementById("genius-token-setup-btn").addEventListener("click", () => {
     promptForToken(() => renderPanel());
   });
